@@ -3,6 +3,9 @@
 #include <opencv2/imgproc/imgproc.hpp>
 
 #include <iostream>
+#include <cstdint>
+#include <exception>
+#include <climits>
 
 #include "rs232.h"
 
@@ -26,28 +29,24 @@ using namespace std;
 
 struct Camera {
 
-    CvCapture *camera_;
+    cv::VideoCapture camera_;
     cv::Mat lastFrame_;
 
     struct NoCamera: std::exception {
-        const char* what() const noexcept { return "No camera detected.\n"; }
+        const char* what() const { return "No camera detected.\n"; }
     };
     struct NoFrame: std::exception {
-        const char* what() const noexcept { return "Frame could not be obtained.\n"; }
+        const char* what() const { return "Frame could not be obtained.\n"; }
     };
 
-    Camera(): camera_(nullptr) {
-        camera_ = cvCaptureFromCAM(0);
-        if (!camera_) throw NoCamera();
+    Camera(): camera_(0) {
+        if (!camera_.isOpened()) throw NoCamera();
     }
 
-    ~Camera() {
-        cvReleaseCapture(&camera_);
-    }
+    ~Camera() {}
 
     cv::Mat &getFrame() {
-        IplImage *iplImg = cvQueryFrame(camera_);
-        lastFrame_ = iplImg;
+        camera_.read(lastFrame_);
         if (lastFrame_.empty()) throw NoFrame();
         return lastFrame_;
     }
@@ -61,10 +60,10 @@ struct Video {
     cv::Mat lastFrame_;
 
     struct NoVideo: std::exception {
-        const char* what() const noexcept { return "Video file did not find.\n"; }
+        const char* what() const { return "Video file did not find.\n"; }
     };
     struct NoFrame: std::exception {
-        const char* what() const noexcept { return "Frame could not be obtained.\n"; }
+        const char* what() const { return "Frame could not be obtained.\n"; }
     };
 
     Video(char const *file): video_(nullptr) {
@@ -91,7 +90,7 @@ class _base_MiniMaestro {
     int port_;
 
     struct CannotOpenPort: std::exception {
-        const char* what() const noexcept { return "Cannot open port.\n"; }
+        const char* what() const { return "Cannot open port.\n"; }
     };
 
 public:
@@ -127,7 +126,7 @@ public:
 
 
 
-cv::Point detectClosestFace(cv::Mat const &frame, cv::Point const &center, cv::CascadeClassifier &face_cascade) {
+cv::Point detectClosestFace(cv::Mat &frame, cv::Point const &center, cv::CascadeClassifier &face_cascade) {
     std::vector<cv::Rect> faces;
     cv::Mat frame_gray;
 
@@ -140,7 +139,7 @@ cv::Point detectClosestFace(cv::Mat const &frame, cv::Point const &center, cv::C
     if (faces.empty()) return cv::Point(-1,-1);
 
     cv::Point closestFaceCenter;
-    double previousError = std::numeric_limits<double>::max();
+    double previousError = DBL_MAX;
     for (auto &face : faces) {
         cv::Point tmpPoint(face.x + face.width*0.5,face.y + face.height*0.5);
         double actualError = cv::norm(tmpPoint - center);
@@ -190,33 +189,42 @@ int main() {
         cv::Mat &getFrame() { return lastFrame_; }
     };
 
-    //Camera source;
+    Camera source;
     //Video source("path to video file");
-    Image source("FreeGreatPicture.com-28660-business-people.jpg");
+    //Image source("FreeGreatPicture.com-28660-business-people.jpg");
 
     cvNamedWindow("Face tracker",1);
 
     cv::CascadeClassifier face_cascade("haarcascade_frontalface_alt.xml");
 
     //_base_MiniMaestro maestro(1,115200);
+	source.getFrame();
+	cv::Point center(source.lastFrame_.cols / 2, source.lastFrame_.rows / 2);
 
-    //while (true)
+    while (true)
     {
         source.getFrame();
 
-        cv::Point center(source.lastFrame_.cols/2,source.lastFrame_.rows/2);
-        cv::Point faceCenter = detectClosestFace(source.lastFrame_,center,face_cascade);
-        cv::Vec2d error = calculateError(center,faceCenter);
-        std::cout << "Error: (" << error.val[0] << "," << error.val[1] << ")\n";
+        auto faceCenter = detectClosestFace(source.lastFrame_,center,face_cascade);
+		if (faceCenter.x >= 0) {
+			auto error = calculateError(center, faceCenter);
+
+			circle(source.lastFrame_, faceCenter, 10, cv::Scalar(255, 0, 0), 4, 8, 0); // todo delete
+
+			std::cout << "Error: (" << error.val[0] << "," << error.val[1] << ")\n";
+		}
+		else {
+			std::cout << "Face is not found.\n";
+		}
 
         //servoRegulator(maestro,error);
 
         cv::imshow("Face tracker", source.lastFrame_);
-        //if(cv::waitKey(1000) >= 0) break;
+        if(cv::waitKey(100) >= 0) break;
 //        SLEEP_MS(100);
     }
 
-    cv::waitKey();
+    //cv::waitKey();
 
     cvDestroyWindow("Face tracker");
 
